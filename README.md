@@ -2,8 +2,7 @@
 
 Dian团队招新题目库
 
-使用编程语言 Python
-(因为是小项目,而且不是特别注重运行效率)
+## Python 版本
 
 环境
 Python 3.10.6
@@ -23,7 +22,12 @@ Python 3.10.6
 运行
 
 ```shell
-pip -i requirements.txt
+pip install -i requirements.txt
 python3 src/model-2.3/test.py &
 python3 src/model-2.3/testc.py &
 ```
+
+## C++版本
+
+开发中...
+

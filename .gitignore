@@ -36,4 +36,24 @@ __pycache__/
 **.pyc
 
 # VSCode
-.vscode/
+**/.vscode/
+
+# VS
+**/.vs/
+*.db
+*.suo
+*.lock
+*.ipch
+*.tlog
+*.tlb
+*.tlh
+*.bak
+*.obj
+*.pch
+*.pdb
+*.idb
+*.aps
+*.ncb
+*.sbr
+*.sdf
+*.ilk
