@@ -19,10 +19,15 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\..\..\src\abase.cpp" />
+    <ClCompile Include="..\..\..\..\src\base.cpp" />
+    <ClCompile Include="..\..\..\..\src\server-main.cpp" />
     <ClCompile Include="..\..\..\..\src\server.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\..\..\..\src\base.h" />
+    <ClInclude Include="..\..\..\..\src\abase.hpp" />
+    <ClInclude Include="..\..\..\..\src\base.hpp" />
+    <ClInclude Include="..\..\..\..\src\server.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>

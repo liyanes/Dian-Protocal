@@ -1,4 +1,5 @@
 #pragma once
+
 #include <iostream>
 #include <string>
 #include <vector>
@@ -8,6 +9,10 @@
 #include <fstream>
 #include <sstream>
 #pragma comment(lib, "ws2_32.lib")
+
+#ifndef min
+#define min(x,y) (((x) < (y)) ? (x) : (y))
+#endif
 
 namespace dian {
 	class buffer {
@@ -55,14 +60,15 @@ namespace dian {
 	};
 	class FileStreamReader : public StreamReader {
 		std::string filepath;
-		std::ifstream file;
+		std::ifstream* file;
 	public:
 		FileStreamReader(std::string filepath);
+		FileStreamReader(const std::string& filepath, std::ifstream&& stream);
 		FileStreamReader(const FileStreamReader&) = delete;
 		FileStreamReader& operator=(const FileStreamReader&) = delete;
 		FileStreamReader(FileStreamReader&&) = delete;
 		FileStreamReader& operator=(FileStreamReader&&) = delete;
-		virtual ~FileStreamReader() = default;
+		virtual ~FileStreamReader();
 		virtual buffer readLine() override;
 		virtual buffer read(size_t length) override;
 		virtual buffer readUntil(const std::string& delimiter) override;
@@ -71,8 +77,7 @@ namespace dian {
 		std::string str;
 		std::stringstream stream;
 	public:
-		StringStreamReader(std::string str);
-		StringStreamReader(const std::string&& str);
+		StringStreamReader(const std::string& str);
 		StringStreamReader(const StringStreamReader&) = delete;
 		StringStreamReader& operator=(const StringStreamReader&) = delete;
 		StringStreamReader(StringStreamReader&&) = delete;
@@ -112,19 +117,20 @@ namespace dian {
 			socket(int af = AF_INET, int type = SOCK_STREAM, int protocol = 0);
 			socket(const socket&) = delete;
 			socket& operator=(const socket&) = delete;
-			socket(socket&&) = delete;
-			socket& operator=(socket&&) = delete;
-			~socket() = default;
-			void listen(const std::string& host, unsigned short port);
+			socket(socket&&) noexcept;
+			socket& operator=(socket&&) noexcept;
+			~socket();
+			void listen(const char* host, unsigned short port);
 			socket accept();
 			void connect(const std::string& host, unsigned short port);
 			void close();
 			void send(const buffer& data);
+			void send(StreamReader& data);
 			void shutdown(int how);
 			buffer recv(size_t length);
 			buffer recvUntil(const std::string& delimiter,int max = 1024);
 			buffer recvLine(int max = 1024);
-
+		
 		};
 	}
 
@@ -136,7 +142,7 @@ namespace dian {
 		SocketStreamReader& operator=(const SocketStreamReader&) = delete;
 		SocketStreamReader(SocketStreamReader&&) = delete;
 		SocketStreamReader& operator=(SocketStreamReader&&) = delete;
-		virtual ~SocketStreamReader() = default;
+		virtual ~SocketStreamReader();
 		virtual buffer readLine() override;
 		virtual buffer read(size_t length) override;
 		virtual buffer readUntil(const std::string& delimiter) override;
@@ -157,31 +163,47 @@ namespace dian {
 			url url;
 			Version version;
 			Headers headers;
-			StreamReader *body;
+			StreamReader *body = nullptr;
 
+			/// @brief parse head of rtsp message(Request)
+			/// @param socket socket to read from
+			/// @return Base object
 			static Base parse(socket::socket &socket);
 			void parseThis(socket::socket &socket);
 		};
 		class Request : public Base {
 		public:
-			dian::socket::socket* socket;
+			dian::socket::socket* socket = nullptr;
 			inline Request(){};
 			inline Request(dian::socket::socket* socket) : socket(socket) {};
 
+			~Request();
+			/// @brief Unparse head of rtsp message
+			/// @return Unparsed buffer
 			dian::buffer unparseHead();
 			static Request parse(dian::socket::socket &socket);
+			void parseThis(dian::socket::socket &socket);
 		};
         class Response : public Base {
+			void _apply_res();
+		protected:
+			bool sended = false;
 		public:
+			int status = 200;
+			std::string reason = "OK";
+
 			const Request *source;
-			inline Response(const Request* source) : source(source) {};
-			inline Response(const Request* source, const std::string& body) : source(source) { this->body = new StringStreamReader(body); };
-			inline Response(const Request* source, StreamReader* body) : source(source) { this->body = body; };
+			inline Response(const Request* source) : source(source) {_apply_res();};
+			inline Response(const Request* source, const std::string& body) : source(source) { this->body = new StringStreamReader(body); _apply_res();};
+			inline Response(const Request* source, StreamReader* body) : source(source) { this->body = body; _apply_res();};
+
+			inline ~Response() { if (body) delete body; };
 
 			dian::buffer unparseHead();
 			static Response parse(const Request* source, dian::socket::socket socket);
 
 			void send();
+			inline bool has_sended() { return sended; };
 		};
 	}
 }
