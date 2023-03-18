@@ -18,7 +18,7 @@ class Server(base.Base):
         self._socket = socket(AF_INET,SOCK_STREAM)
         self._sessions:dict[str,base.Session] = {}
         self._thread_num = thread_num
-        self._task_queue:Queue[tuple[socket,Address]] = Queue()
+        # self._task_queue:Queue[tuple[socket,Address]] = Queue()
         self._use_auth = False
         self._auths = []
         self.root = 'testfile'
@@ -31,15 +31,16 @@ class Server(base.Base):
 
     def _thread_boot(self):
         while True:
-            socket, address = self._task_queue.get()
-            
+            socket, address = self._socket.accept()
+            # socket, address = self._task_queue.get()
             while True:
                 # 处理请求
                 try:
                     req = base.Request.unparse(socket)
-                except Exception as e:
-                    socket.close()
-                    break
+                except ConnectionResetError as e:
+                    if e.errno == 10054:
+                        socket.close()
+                        break
                 try:
 
                     if req.method not in ALLOW_METHODS:
@@ -97,13 +98,21 @@ class Server(base.Base):
                         break
                 except base.StopHandler:
                     continue
+                except ConnectionResetError as e:
+                    if e.errno == 10054:
+                        socket.close()
+                        break
 
 
     def start(self):
-        for i in range(self._thread_num):
-            threading.Thread(target=self._thread_boot,daemon=True).start()
+        threads = [threading.Thread(target=self._thread_boot,daemon=True) for _ in range(self._thread_num)]
         self._socket.bind(self._address)
         self._socket.listen(self._thread_num)
-        while True:
-            socket, address = self._socket.accept()
-            self._task_queue.put((socket,address))
+        # while True:
+        #     socket, address = self._socket.accept()
+        #     self._task_queue.put((socket,address))
+        for i in threads:
+            i.start()
+        for i in threads:
+            i.join()
+        self._socket.close()

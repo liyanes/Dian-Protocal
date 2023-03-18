@@ -5,214 +5,289 @@ using namespace dian;
 using namespace dian::socket;
 using namespace dian::rtsp;
 
-dian::socket::socket::socket(int af, int type, int protocol) {
+static void trim(string &s)
+{
+    if (!s.empty())
+    {
+        s.erase(0, s.find_first_not_of(" "));
+        s.erase(s.find_last_not_of(" ") + 1);
+    }
+}
+
+dian::socket::socket::socket(int af, int type, int protocol)
+{
     socketvalue = ::socket(af, type, protocol);
 }
 
-dian::socket::socket::socket(SOCKET socketvalue) {
+dian::socket::socket::socket(SOCKET socketvalue)
+{
     this->socketvalue = socketvalue;
 }
 
-dian::socket::socket::~socket() {
+dian::socket::socket::~socket()
+{
     closesocket(socketvalue);
 }
 
-void dian::socket::socket::listen(const char* host, unsigned short port) {
+void dian::socket::socket::listen(const char *host, unsigned short port)
+{
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.S_un.S_addr = inet_addr(host);
-    if (SOCKET_ERROR == ::bind(socketvalue, (sockaddr*)&addr, sizeof(addr))){
+    if (SOCKET_ERROR == ::bind(socketvalue, (sockaddr *)&addr, sizeof(addr)))
+    {
         int lasterror = WSAGetLastError();
         throw BindError(string(string("bind error") + to_string(lasterror)).c_str());
     }
-    if (SOCKET_ERROR == ::listen(socketvalue, 5)){
+    if (SOCKET_ERROR == ::listen(socketvalue, 5))
+    {
         throw ListenError("listen error");
     }
 }
 
-dian::socket::socket dian::socket::socket::accept() {
+dian::socket::socket dian::socket::socket::accept()
+{
     sockaddr_in addr;
     int len = sizeof(addr);
-    SOCKET socketvalue = ::accept(this->socketvalue, (sockaddr*)&addr, &len);
-    if (socketvalue == INVALID_SOCKET){
+    SOCKET socketvalue = ::accept(this->socketvalue, (sockaddr *)&addr, &len);
+    if (socketvalue == INVALID_SOCKET)
+    {
         throw AcceptError("accept error");
     }
     return dian::socket::socket(socketvalue);
 }
 
-void dian::socket::socket::connect(const std::string& host, unsigned short port) {
+void dian::socket::socket::connect(const std::string &host, unsigned short port)
+{
     sockaddr_in addr;
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.S_un.S_addr = inet_addr(host.c_str());
-    if (SOCKET_ERROR == ::connect(socketvalue, (sockaddr*)&addr, sizeof(addr))){
+    if (SOCKET_ERROR == ::connect(socketvalue, (sockaddr *)&addr, sizeof(addr)))
+    {
         throw ConnectError("connect error");
     }
 }
 
-void dian::socket::socket::send(const buffer& data) {
-    if (SOCKET_ERROR == ::send(socketvalue, (const char*)data.data(), (int)((buffer)data).size(), 0)){
-        throw SendError("send error");
+void dian::socket::socket::send(const buffer &data)
+{
+    if (SOCKET_ERROR == ::send(socketvalue, (const char *)data.data(), (int)(const_cast<buffer *>(&data))->size(), 0))
+    {
+        int error = WSAGetLastError();
+        throw SendError(string(string("send error") + to_string(error)).c_str());
     }
 }
 
-buffer dian::socket::socket::recv(size_t length) {
+buffer dian::socket::socket::recv(size_t length)
+{
     buffer data(length);
-    if (SOCKET_ERROR == ::recv(socketvalue, (char*)data.data(), (const int)data.size(), 0)){
+    if (SOCKET_ERROR == ::recv(socketvalue, (char *)data.data(), (const int)data.size(), 0))
+    {
         throw RecvError("recv error");
     }
     return data;
 }
 
-void dian::socket::socket::close() {
+void dian::socket::socket::close()
+{
     closesocket(socketvalue);
     this->closed = true;
 }
 
-void dian::socket::socket::shutdown(int how) {
+void dian::socket::socket::shutdown(int how)
+{
     ::shutdown(socketvalue, how);
 }
 
-buffer dian::socket::socket::recvLine(int max){
-    buffer data(max);
-    int i = 0;
-    while (true){
-        if (SOCKET_ERROR == ::recv(socketvalue, (char*)data.data() + i, 1, 0)){
-            throw RecvError("recv error");
-        }
-        if (((char*)data.data())[i] == '\r'){
-            if (SOCKET_ERROR == ::recv(socketvalue, (char*)data.data() + i + 1, 1, 0)){
-                throw RecvError("recv error");
-            }
-            if (((char*)data.data())[i + 1] == '\n'){
-                break;
-            }
-        }
-        i++;
-    }
-    return buffer(data.data(), i);
+buffer dian::socket::socket::recvLine(int max)
+{
+    return recvUntil("\r\n", max, true);
 }
 
-buffer dian::socket::socket::recvUntil(const std::string& str, int max){
-    buffer data(max);
-    int i = 0;
-    while (true){
-        if (SOCKET_ERROR == ::recv(socketvalue, (char*)data.data() + i, 1, 0)){
-            throw RecvError("recv error");
+buffer dian::socket::socket::recvUntil(const std::string &str, int max, bool set_text)
+{
+    bufferStream data(max == -1 ? 1024 : max);
+    int recved = 0, strlen_ = str.size();
+    while (recved < max || max == -1)
+    {
+        char value = 0;
+        if (SOCKET_ERROR == ::recv(socketvalue, &value, 1, 0))
+        {
+            throw RecvError("recv error",WSAGetLastError());
         }
-        if (((char*)data.data())[i] == str[0]){
-            if (SOCKET_ERROR == ::recv(socketvalue, (char*)data.data() + i + 1, str.size() - 1, 0)){
-                throw RecvError("recv error");
-            }
-            if (memcmp((char*)data.data() + i, str.c_str(), str.size()) == 0){
-                break;
-            }
+        data << value;
+        recved++;
+        if (memcmp((char *)data.data() + recved - strlen_, str.c_str(), strlen_) == 0)
+        {
+            break;
         }
-        i++;
     }
-    return buffer(data.data(), i);
+    if (set_text)
+    {
+        data << '\0';
+    }
+    return data;
 }
 
-Base Base::parse(socket::socket &socket) {
+Base Base::parse(socket::socket &socket)
+{
     Base base;
     buffer line = socket.recvUntil("\r\n");
-    char version[10] = { 0 };
-    if (sscanf("%s %s %[^\r]\r\n", (char*)line.data(), base.method, base.url, version) != 3) {
-		throw exception("parse error");
-	}
+    while (strcmp((char*)line.data(), "\r\n") == 0) {
+        // 即只有空行
+        line = socket.recvUntil("\r\n");
+    }
+    char *cur = (char *)line.data(), *tmp = cur;
+    while (*tmp++ != ' ' && *tmp != '\0')
+        ;
+    if (*tmp == '\0')
+    {
+        throw exception("parse error");
+    }
+    base.method = string(cur, tmp - cur - 1);
+    cur = tmp;
+    while (*tmp++ != ' ' && *tmp != '\0')
+        ;
+    if (*tmp == '\0')
+    {
+        throw exception("parse error");
+    }
+    base.url = string(cur, tmp - cur - 1);
+    cur = tmp;
+    while (*tmp++ != '\r' && *tmp != '\0')
+        ;
+    if (*tmp == '\0')
+    {
+        throw exception("parse error");
+    }
+    string version = string(cur, tmp - cur - 1);
+
     int major, minor;
-    if (sscanf("%d.%d", version, &major, &minor) != 2) {
+    if (sscanf("%d.%d", version.c_str(), &major, &minor) != 2)
+    {
         throw exception("parse error");
     }
     base.version.major = major;
     base.version.minor = minor;
-    while (true){
+    while (true)
+    {
         line = socket.recvUntil("\r\n");
-        if (line.size() == 0){
+        if (line.size() == 0)
+        {
             break;
         }
-        if (strcmp((char*)line.data(),"\r\n") == 0){
+        if (strcmp((char *)line.data(), "\r\n") == 0)
+        {
             break;
         }
-        char key[100] = { 0 };
-        char value[100] = { 0 };
-        if (sscanf("%[^:]:%[^\r]\r\n", (char*)line.data(), key, value) != 2) {
+        string key, value;
+        tmp = cur = (char *)line.data();
+        while (*tmp++ != ':' && *tmp != '\0')
+            ;
+        if (*tmp == '\0')
+        {
             throw exception("parse error");
         }
+        key = string(cur, tmp - cur - 1);
+        cur = tmp;
+        while (*tmp++ != '\r' && *tmp != '\0')
+            ;
+        if (*tmp == '\0')
+        {
+            throw exception("parse error");
+        }
+        trim(key);
+        trim(value);
         base.headers[key] = value;
     }
     base.body = new SocketStreamReader(&socket);
     return base;
 }
 
-void Base::parseThis(socket::socket &socket) {
+void Base::parseThis(socket::socket &socket)
+{
     buffer line = socket.recvUntil("\r\n");
-    char version[10] = { 0 };
-    if (sscanf("%s %s %[^\r]\r\n", (char*)line.data(), method, url, version) != 3) {
+    while (strcmp((char*)line.data(),"\r\n") == 0) {
+        // 即只有空行
+        line = socket.recvUntil("\r\n");
+    }
+    char *cur = (char *)line.data(), *tmp = cur;
+    while (*tmp++ != ' ' && *tmp != '\0')
+        ;
+    if (*tmp == '\0')
+    {
         throw exception("parse error");
     }
+    this->method = string(cur, tmp - cur - 1);
+    cur = tmp;
+    while (*tmp++ != ' ' && *tmp != '\0')
+        ;
+    if (*tmp == '\0')
+    {
+        throw exception("parse error");
+    }
+    this->url = string(cur, tmp - cur - 1);
+    cur = tmp;
+    while (*tmp++ != '\r' && *tmp != '\0')
+        ;
+    if (*tmp == '\0')
+    {
+        throw exception("parse error");
+    }
+    string version = string(cur, tmp - cur - 1);
+
     int major, minor;
-    if (sscanf("%d.%d", version, &major, &minor) != 2) {
+    if (sscanf(version.c_str(),"%d.%d", &major, &minor) != 2)
+    {
         throw exception("parse error");
     }
     this->version.major = major;
     this->version.minor = minor;
-    while (true){
+    while (true)
+    {
         line = socket.recvUntil("\r\n");
-        if (line.size() == 0){
+        if (line.size() == 0)
+        {
             break;
         }
-        if (strcmp((char*)line.data(),"\r\n") == 0){
+        if (strcmp((char *)line.data(), "\r\n") == 0)
+        {
             break;
         }
-        char key[100] = { 0 };
-        char value[100] = { 0 };
-        if (sscanf("%[^:]:%[^\r]\r\n", (char*)line.data(), key, value) != 2) {
+        string key, value;
+        tmp = cur = (char *)line.data();
+        while (*tmp++ != ':' && *tmp != '\0')
+            ;
+        if (*tmp == '\0')
+        {
             throw exception("parse error");
         }
-        headers[key] = value;
+        key = string(cur, tmp - cur - 1);
+        cur = tmp;
+        while (*tmp++ != '\r' && *tmp != '\0')
+            ;
+        if (*tmp == '\0')
+        {
+            throw exception("parse error");
+        }
+        value = string(cur, tmp - cur - 1);
+        trim(key);
+        trim(value);
+        this->headers[key] = value;
     }
-    body = new SocketStreamReader(&socket);
+    this->body = new SocketStreamReader(&socket);
 }
 
-Request Request::parse(dian::socket::socket &socket) {
+Request Request::parse(dian::socket::socket &socket)
+{
     Request request;
     request.parseThis(socket);
     return request;
 }
 
-void bufferStream::resize(size_t size){
-    if (size != _buffer.size()){
-        auto new_buffer = new char[size];
-        memcpy(new_buffer, _buffer.data(), min(size,_buffer.size()));
-        delete[] _buffer.data();
-        _buffer._buffer = new_buffer;
-        _buffer._size = size;
-    }
-}
-
-void bufferStream::operator<<(const buffer& data){
-    if (_buffer.size() - ((char*)pos - _buffer.data()) < data.size()){
-        resize(_buffer.size() + data.size());
-    }
-    memcpy(pos, data.data(), data.size());
-    this->pos = (void*)((char*)pos + data.size());
-}
-
-void bufferStream::operator<<(const char* data){
-    if (_buffer.size() - ((char*)pos - _buffer.data()) < strlen(data)){
-        resize(_buffer.size() + strlen(data));
-    }
-    memcpy(pos, data, strlen(data));
-    this->pos = (void*)((char*)pos + strlen(data));
-}
-
-buffer bufferStream::to_buffer(){
-    return this->_buffer;
-}
-
-buffer Request::unparseHead(){
+buffer Request::unparseHead()
+{
     bufferStream _stream(1024);
     _stream << (std::string)method;
     _stream << " ";
@@ -223,96 +298,124 @@ buffer Request::unparseHead(){
     _stream << version.minor;
     _stream << "\r\n";
 
-    for (auto& header : headers){
+    for (auto &header : headers)
+    {
         _stream << header.first;
         _stream << ": ";
         _stream << header.second;
         _stream << "\r\n";
     }
     _stream << "\r\n";
-    return _stream.to_buffer();
+    return _stream;
 }
 
-FileStreamReader::FileStreamReader(std::string filepath):
-    filepath(filepath) {
+FileStreamReader::FileStreamReader(const std::string& filepath) : filepath(filepath),do_free(true)
+{
     this->file = new std::ifstream();
     this->file->open(filepath, std::ios::binary);
+    this->file->seekg(0, std::ios::end);
+    filesize = this->file->tellg();
+    this->file->seekg(0, std::ios::beg);
 }
 
-FileStreamReader::~FileStreamReader() {
+FileStreamReader::~FileStreamReader()
+{
     this->file->close();
-    delete this->file;
+    if (this->do_free)
+        delete this->file;
 }
 
-buffer FileStreamReader::read(size_t size) {
-    buffer data(size);
-    this->file->read((char*)data.data(), size);
+buffer FileStreamReader::read(size_t size)
+{
+    size_t maxsize = filesize - this->file->tellg();
+    maxsize = maxsize > size ? size : maxsize;
+    buffer data(maxsize);
+    this->file->read((char *)data.data(), maxsize);
     return data;
 }
 
-buffer FileStreamReader::readLine() {
+buffer FileStreamReader::readLine()
+{
     std::string line;
-    this->file->getline((char*)line.c_str(), line.size(), '\n');
-    if (line[line.size() - 1] == '\r'){
+    this->file->getline((char *)line.c_str(), line.size(), '\n');
+    if (line[line.size() - 1] == '\r')
+    {
         line.pop_back();
     }
-    return buffer((const void*)line.c_str(), line.size());
+    return buffer((const void *)line.c_str(), line.size());
 }
 
-buffer FileStreamReader::readUntil(const std::string &str) {
+buffer FileStreamReader::readUntil(const std::string &str)
+{
     std::stringstream ss;
     char c;
     int strlen = str.size();
-    while (true){
+    while (true)
+    {
         this->file->get(c);
         ss << c;
-        if (str[strlen - 1] == c){
-            if (strlen == 1){
+        if (str[strlen - 1] == c)
+        {
+            if (strlen == 1)
+            {
                 break;
             }
-            if (ss.str().ends_with(str)){
+            if (ss.str().ends_with(str))
+            {
                 break;
             }
+        }
+        if (this->file->eof()) {
+            break;
         }
     }
     return buffer(ss.str().c_str(), ss.str().size());
 }
 
-StringStreamReader::StringStreamReader(const std::string& str):
-    str(str) {
-        stream<<str;
+StringStreamReader::StringStreamReader(const std::string &str) : str(str)
+{
+    stream << str;
 }
 
-buffer StringStreamReader::read(size_t size) {
+buffer StringStreamReader::read(size_t size)
+{
     buffer data(size);
-    stream.read((char*)data.data(), size);
+    stream.read((char *)data.data(), size);
     return data;
 }
 
-buffer StringStreamReader::readLine() {
+buffer StringStreamReader::readLine()
+{
     std::string line;
-    stream.getline((char*)line.c_str(), line.size(), '\n');
-    if (line[line.size() - 1] == '\r'){
+    stream.getline((char *)line.c_str(), line.size(), '\n');
+    if (line[line.size() - 1] == '\r')
+    {
         line.pop_back();
     }
-    if (line[line.size() - 1] == '\r'){
+    if (line[line.size() - 1] == '\r')
+    {
         line.pop_back();
     }
-    return buffer((const void*)line.c_str(), line.size());
+    return buffer((const void *)line.c_str(), line.size());
 }
 
-buffer StringStreamReader::readUntil(const std::string &str) {
+buffer StringStreamReader::readUntil(const std::string &str)
+{
     std::stringstream ss;
     char c;
-    int strlen = str.size();
-    while (true){
+    int strlen = (int)str.size();
+    while (true)
+    {
         stream.get(c);
         ss << c;
-        if (str[strlen - 1] == c){
-            if (strlen == 1){
+        if (str[strlen - 1] == c)
+        {
+            if (strlen == 1)
+            {
                 break;
             }
-            if (ss.str().ends_with(str)){
+            if (ss.str().ends_with(str))
+            {
                 break;
             }
         }
@@ -320,13 +423,15 @@ buffer StringStreamReader::readUntil(const std::string &str) {
     return buffer(ss.str().c_str(), ss.str().size());
 }
 
-Response Response::parse(const Request* source, dian::socket::socket socket) {
+Response Response::parse(const Request *source, dian::socket::socket socket)
+{
     Response response(source);
     response.parseThis(socket);
     return response;
 }
 
-buffer Response::unparseHead(){
+buffer Response::unparseHead()
+{
     bufferStream _stream(1024);
     _stream << "HTTP/";
     _stream << version.major;
@@ -338,7 +443,8 @@ buffer Response::unparseHead(){
     _stream << reason;
     _stream << "\r\n";
 
-    for (auto& header : headers){
+    for (auto &header : headers)
+    {
         _stream << header.first;
         _stream << ": ";
         _stream << header.second;
@@ -348,92 +454,227 @@ buffer Response::unparseHead(){
     return _stream.to_buffer();
 }
 
-void Response::send(){
-    if (this->sended){
+void Response::send()
+{
+    if (this->sended)
+    {
         throw std::runtime_error("Response already sended");
     }
+    if (this->body) {
+        size_t con_len = this->body->maxlen();
+        if (con_len == -1) {
+            throw NotImplementError("Thunked Transport Not Implemented");
+        }
+        this->headers["Content-Length"] = std::to_string(con_len);
+    }
     this->source->socket->send(this->unparseHead());
-    this->source->socket->send(*this->body);
+    if (this->body) this->source->socket->send(*this->body);
     this->sended = true;
 }
 
-void dian::socket::socket::send(StreamReader &data) {
-    while (true){
+void dian::socket::socket::send(StreamReader &data)
+{
+    while (true)
+    {
         auto buffer = data.read(1024);
-        if (buffer.size() == 0){
+        if (buffer.size() == 0)
+        {
             break;
         }
         this->send(buffer);
     }
 }
 
-
-void Response::_apply_res(){
+void Response::_apply_res()
+{
     this->method = this->source->method;
     this->url = this->source->url;
     this->version = this->source->version;
 }
 
-void Request::parseThis(dian::socket::socket &socket){
+void Request::parseThis(dian::socket::socket &socket)
+{
     Base::parseThis(socket);
     this->socket = &socket;
     return;
 }
 
-dian::socket::socket::socket(socket&& other) noexcept {
+dian::socket::socket::socket(socket &&other) noexcept
+{
     this->socketvalue = other.socketvalue;
     other.closed = true;
 }
 
-dian::socket::socket& dian::socket::socket::operator=(socket&& other) noexcept {
+dian::socket::socket &dian::socket::socket::operator=(socket &&other) noexcept
+{
     this->socketvalue = other.socketvalue;
     other.closed = true;
     return *this;
 }
 
-FileStreamReader::FileStreamReader(const std::string& filepath, std::ifstream&& stream):
-    filepath(filepath),file(&stream) {}
+FileStreamReader::FileStreamReader(const std::string &filepath, std::ifstream &&stream) : filepath(filepath), file(&stream), do_free(false) {
+    this->file->seekg(0, std::ios::end);
+    filesize = this->file->tellg();
+    this->file->seekg(0, std::ios::beg);
+}
 
 Request::~Request() {}
 
-SocketStreamReader::SocketStreamReader(dian::socket::socket* socket):
-    socket(socket) {}
+SocketStreamReader::SocketStreamReader(dian::socket::socket *socket) : socket(socket) {}
 
-SocketStreamReader::~SocketStreamReader() {
+SocketStreamReader::~SocketStreamReader()
+{
     this->socket->close();
 }
 
-buffer SocketStreamReader::read(size_t size) {
+buffer SocketStreamReader::read(size_t size)
+{
     buffer data(size);
     this->socket->recv(size);
     return data;
 }
 
-buffer SocketStreamReader::readLine() {
+buffer SocketStreamReader::readLine()
+{
     std::string line;
-    line = (char*)this->socket->recvLine().data();
-    if (line[line.size() - 1] == '\r'){
+    line = (char *)this->socket->recvLine().data();
+    if (line[line.size() - 1] == '\r')
+    {
         line.pop_back();
     }
-    return buffer((const void*)line.c_str(), line.size());
+    return buffer((const void *)line.c_str(), line.size());
 }
 
-buffer SocketStreamReader::readUntil(const std::string &str) {
+buffer SocketStreamReader::readUntil(const std::string &str)
+{
     std::stringstream ss;
     char c;
-    int strlen = str.size();
-    while (true){
-        c = ((char*)this->socket->recv(1).data())[0];
+    int strlen = (int)str.size();
+    while (true)
+    {
+        c = ((char *)this->socket->recv(1).data())[0];
         ss << c;
-        if (str[strlen - 1] == c){
-            if (strlen == 1){
+        if (str[strlen - 1] == c)
+        {
+            if (strlen == 1)
+            {
                 break;
             }
-            if (ss.str().ends_with(str)){
+            if (ss.str().ends_with(str))
+            {
                 break;
             }
         }
     }
     return buffer(ss.str().c_str(), ss.str().size());
 }
+
+void bufferStream::resize(size_t size)
+{
+    char* new_buffer = new char[size];
+    memcpy(new_buffer, _buffer, min(_size,size));
+    delete[] _buffer;
+    _buffer = new_buffer;
+    _size = size;
+}
+
+bufferStream& bufferStream::operator<<(const char* value){
+    size_t len = strlen(value);
+    if(_size - _pos < len){
+        resize(_size + len);
+    }
+    memcpy(_buffer + _pos, value, len);
+    this->_pos += len;
+    return *this;
+}
+
+bufferStream& bufferStream::operator<<(const std::string& value){
+    size_t len = value.size();
+    if(_size - _pos < len){
+        resize(_size + len);
+    }
+    memcpy(_buffer + _pos, value.c_str(), len);
+    this->_pos += len;
+    return *this;
+}
+
+bufferStream& bufferStream::operator<<(const char chr){
+    if(_size - _pos < 1){
+        resize(_size + 1);
+    }
+    memcpy(_buffer + _pos, &chr, 1);
+    this->_pos += + 1;
+    return *this;
+}
+
+buffer& buffer::operator=(buffer&& other) noexcept{
+    this->~buffer();
+    new (this) buffer(other);
+    return *this;
+}
+
+RangeFileStreamReader::RangeFileStreamReader(const std::string& filepath, size_t start, size_t end) : 
+    FileStreamReader(filepath), start(start), end(end)
+{
+    this->file->seekg(start);
+}
+
+RangeFileStreamReader::RangeFileStreamReader(const std::string& filepath, std::ifstream&& stream, size_t start, size_t end) : 
+    FileStreamReader(filepath, std::move(stream)), start(start), end(end)
+{
+    this->file->seekg(start);
+}
+
+buffer RangeFileStreamReader::read(size_t size)
+{
+    if (this->end == -1) return FileStreamReader::read(size);
+    if (this->file->tellg() >= this->end) {
+        return buffer();
+    }
+    size_t max_size = this->end - this->file->tellg();
+    if (size > max_size) {
+        size = max_size;
+    }
+    return FileStreamReader::read(size);
+}
+
+buffer RangeFileStreamReader::readLine()
+{
+    if (this->end == -1) return FileStreamReader::readLine();
+    std::streampos pos  = this->file->tellg();
+    if (pos >= this->end) {
+        return buffer();
+    }
+    buffer ret = FileStreamReader::readLine();
+    if (ret.size() > this->end - pos) {
+        ret.resize(this->end - pos);
+    }
+    return ret;
+}
+
+buffer RangeFileStreamReader::readUntil(const std::string& str)
+{
+    if (this->end == -1) return FileStreamReader::readUntil(str);
+    std::streampos pos  = this->file->tellg();
+    if (pos >= this->end) {
+        return buffer();
+    }
+    buffer ret = FileStreamReader::readUntil(str);
+    if (ret.size() > this->end - pos) {
+        ret.resize(this->end - pos);
+    }
+    return ret;
+}
+
+void buffer::resize(size_t newsize){
+    if(newsize == this->size()){
+        return;
+    }
+    char* new_buffer = new char[newsize];
+    memcpy(new_buffer, this->_buffer, min(this->size(), newsize));
+    delete[] this->_buffer;
+    this->_buffer = new_buffer;
+    this->_size = newsize;
+}
+
 

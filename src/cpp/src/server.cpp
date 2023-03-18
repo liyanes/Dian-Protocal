@@ -41,19 +41,34 @@ RtspServer::~RtspServer() {
 
 void RtspServer::start(unsigned thread_num){
     for (unsigned i = 0; i < thread_num; i++){
-        threads.push_back(std::thread([this](){
+        threads.push_back(std::thread([this](int seed){
+            srand(seed);
             while (true){
                 dian::socket::socket client = socket_.accept();
+#ifdef DIAN_DEBUG
+                cout << "[Info] New connection <id=" << client.sysid() << ">" << endl;
+#endif
                 while (true){
                     RtspRequest request(&client);
-                    try{
+                    try {
                         request.parseThis(client);
+                    } catch (dian::socket::RecvError e){
+                        if (e.errcode == 10054) {
+                            // 远程主机关闭了连接
+#ifdef DIAN_DEBUG
+                            cout << "[Info] Socket <id=" << client.sysid() << "> closed by remote host" << endl;
+#endif
+                            break;
+                        }
                     } catch (...){
                         RtspResponse response(&request);
                         response.status = 400;
                         response.reason = "Bad Request";
                         response.send();
                         response.source->socket->close();
+#ifdef DIAN_DEBUG
+                        cout << "[Info] Socket <id=" << client.sysid() << "> closed,for bad request" << endl;
+#endif
                         break;
                     }
                     request.body = new SocketStreamReader(&client);
@@ -61,16 +76,28 @@ void RtspServer::start(unsigned thread_num){
                     
                     try{
                         this->_handle(request, response, client);
+                    }
+                    catch (dian::socket::SendError e) {
+                        if (e.errcode == 10054) {
+                            // 远程主机关闭了连接
+#ifdef DIAN_DEBUG
+                            cout << "[Info] Socket <id=" << client.sysid() << "> closed by remote host" << endl;
+#endif
+                            break;
+                        }
                     } catch (...) {
                         response.status = 500;
                         response.reason = "Internal Server Error";
                         response.send();
-                        response.source->socket->close();
+                        response.source->socket->close(); 
+#ifdef DIAN_DEBUG
+                        cout << "[info] Socket <id=" << client.sysid() << "> closed,for server crack." << endl;
+#endif
                         break;
                     };
                 }
             }
-        }));
+        },rand()));
     }
     for (auto& thread : threads){
         thread.join();
@@ -78,7 +105,7 @@ void RtspServer::start(unsigned thread_num){
 }
 
 void RtspServer::_handle(RtspRequest& request, RtspResponse& response, dian::socket::socket& client) {
-    // 澶勭悊RTSP璇锋眰
+    // 处理RTSP请求
     if (request.method == "OPTIONS"){
         response.status = 200;
         response.reason = "OK";
@@ -90,12 +117,23 @@ void RtspServer::_handle(RtspRequest& request, RtspResponse& response, dian::soc
             return;
         }
         response.send();
+#ifdef DIAN_DEBUG
+        cout << "OPTIONS 200 OK" << endl;
+#endif
         return;
     }else if (request.method == "SETUP"){
         auto uri = request.getURI();
         Session session;
-        // 鐢熸垚鍞竴id
-        session.id = std::to_string(rand()) + std::to_string(rand()) + std::to_string(rand()) + std::to_string(rand());
+        // 生成唯一id
+        sessions_lock.lock();
+        while (true) {
+            session.id = std::to_string(rand()) + std::to_string(rand());
+            if (sessions.find(session.id) == sessions.end()) {
+                sessions_lock.unlock();
+				break;
+			}
+            cout << "Generate Session ID Failed:" << session.id << endl;
+        }
         session.url = request.url;
         session.ip = uri.host;
         session.port = uri.port;
@@ -127,7 +165,12 @@ void RtspServer::_handle(RtspRequest& request, RtspResponse& response, dian::soc
         if (this->setupCallback != nullptr){
             (*this->setupCallback)(request,response,*this,&session);
         }
+        sessions_lock.lock();
         sessions[session.id] = session;
+#ifdef DIAN_DEBUG
+        cout << "Setuped.Add Session:" << session.id << endl;
+#endif
+        sessions_lock.unlock();
         if (!response.has_sended()){
             response.status = 200;
             response.reason = "OK";
@@ -137,14 +180,56 @@ void RtspServer::_handle(RtspRequest& request, RtspResponse& response, dian::soc
             response.send();
         }
         return;
-    }else if (request.method == "PLAY"){
+    }else if (request.method == "TEARDOWN"){
+        auto session_id = request.headers["Session"];
+        sessions_lock.lock();
         if (sessions.find(request.headers["Session"]) == sessions.end()){
             response.status = 454;
             response.reason = "Session Not Found";
             response.send();
+            sessions_lock.unlock();
             return;
         }
         auto& session = sessions[request.headers["Session"]];
+        sessions_lock.unlock();
+        if (this->teardownCallback != nullptr){
+            (*this->teardownCallback)(request,response,*this,&session);
+        }
+        if (!response.has_sended()){
+            response.status = 200;
+            response.reason = "OK";
+            response.headers["Session"] = request.headers["Session"];
+            // response.headers["Content-Length"] = "0";
+            response.send();
+        }
+        sessions_lock.lock();
+        sessions.erase(request.headers["Session"]);
+#ifdef DIAN_DEBUG
+        cout << "Teardowned.Remove Session:" << request.headers["Session"] << endl;
+#endif
+        sessions_lock.unlock();
+        return;
+    }else if (request.method == "PLAY"){
+        sessions_lock.lock();
+        if (sessions.find(request.headers["Session"]) == sessions.end()){
+            response.status = 454;
+            response.reason = "Session Not Found";
+            response.send();
+            sessions_lock.unlock();
+            return;
+        }
+        sessions_lock.unlock();
+        if (request.headers.find("CSeq") == request.headers.end()){
+            response.status = 400;
+            response.reason = "Bad Request";
+            response.send();
+            return;
+        }
+        sessions_lock.lock();
+        auto& session = sessions[request.headers["Session"]];
+        sessions_lock.unlock();
+        response.headers["CSeq"] = request.headers["CSeq"];
+        response.headers["Session"] = request.headers["Session"];
         if (this->playCallback != nullptr){
             (*this->playCallback)(request,response,*this,&session);
         }
@@ -157,26 +242,6 @@ void RtspServer::_handle(RtspRequest& request, RtspResponse& response, dian::soc
             // response.headers["Content-Length"] = "0";
             response.send();
         }
-    }else if (request.method == "TEARDOWN"){
-        if (sessions.find(request.headers["Session"]) == sessions.end()){
-            response.status = 454;
-            response.reason = "Session Not Found";
-            response.send();
-            return;
-        }
-        auto& session = sessions[request.headers["Session"]];
-        if (this->teardownCallback != nullptr){
-            (*this->teardownCallback)(request,response,*this,&session);
-        }
-        if (!response.has_sended()){
-            response.status = 200;
-            response.reason = "OK";
-            response.headers["Session"] = request.headers["Session"];
-            // response.headers["Content-Length"] = "0";
-            response.send();
-        }
-        sessions.erase(request.headers["Session"]);
-        return;
     }else {
         response.status = 405;
         response.reason = "Method Not Allowed";
@@ -185,5 +250,3 @@ void RtspServer::_handle(RtspRequest& request, RtspResponse& response, dian::soc
         return;
     }
 }
-
-

@@ -6,7 +6,14 @@ import re
 
 import os
 VERSION = '0.5'
-ROOT = 'testfile'
+root = 'testfile'
+
+def setroot(value:str):
+    global root
+    root = value
+
+def _to_str(value:bytes) -> str:
+    return value.decode() if isinstance(value,bytes) else value
 
 class StreamReader:
     @abstractmethod
@@ -68,9 +75,9 @@ class FileStreamReader(StreamReader):
     def readall(self):
         return self._file.read(self._limit[1] - self._limit[0]) if self._limit[1] != -1 else self._file.read()
 
-RequestHead_re = re.compile(r"^(?P<method>[A-Z]+) (?P<url>.+) (?P<version>.+)(\r(\n)?)?$")
-BaseHeader_re = re.compile(r"^(?P<key>.+):(?P<value>.+)(\r(\n)?)?$")
-ResponseHead_re = re.compile(r"^(?P<version>.+) (?P<status>[0-9]+) (?P<status_text>.+)$")
+RequestHead_re = re.compile("^(?P<method>[A-Z]+) (?P<url>.+) (?P<version>.+)(\r)?$")
+BaseHeader_re = re.compile("^(?P<key>.+?) *: *(?P<value>.+)(\r)?$")
+ResponseHead_re = re.compile("^(?P<version>.+) (?P<status>[0-9]+) (?P<status_text>.+)(\r)?$")
 
 @attr.s(auto_attribs=True)
 class Request:
@@ -111,7 +118,7 @@ class Request:
 
     def parse(self):
         return f"{self.method} {self.url} {self.version}\r\n" + "\r\n".join([f"{key}:{value}" for key,value in self.headers.items()]) + "\r\n\r\n" + (
-            self.body.readall() if isinstance(self.body,StreamReader) else self.body
+            _to_str(self.body.readall()) if isinstance(self.body,StreamReader) else _to_str(self.body)
         )
     
 @attr.s(auto_attribs=True,slots=True)
@@ -133,7 +140,7 @@ class Response:
 
     def parse(self):
         return f"{self.version} {self.status} {self.status_text}\r\n" + "\r\n".join([f"{key}:{value}" for key,value in self.headers.items()]) + "\r\n\r\n" + (
-            self.body.readall() if isinstance(self.body,StreamReader) else self.body
+            _to_str(self.body.readall()) if isinstance(self.body,StreamReader) else _to_str(self.body)
         )
     
     def parsehead(self):
@@ -188,9 +195,10 @@ class Session:
         import os
         
         file = match.groupdict()["file"]
-        file = os.path.join(ROOT,file)
+        file = os.path.join(root,file)
         if not os.path.exists(file):
-            Response(version=VERSION,status=404,status_text='Not Found',headers={},req=request,body='').response()
+            print("File Not Found:",file)
+            Response(version=VERSION,status=404,status_text='Not Found',headers={'Session':str(self.session_id)},req=request,body='').response()
             raise StopHandler()
         self.file = open(file,"rb")
         self.file.seek(0,2)
@@ -208,22 +216,23 @@ class Session:
             self.request.headers["Connection"] = "keep-alive"
             Response(version=VERSION,status=206,status_text='Partial Content',headers=self.request.headers,body=self.request.body,req=self.request).response()
             return
-        match = re.compile('^ntp *: *(?P<start>[0-9]+)-(?P<end>[0-9]+)? *$').match(range)
+        match = re.compile('^npt *= *(?P<start>[0-9]+)-(?P<end>[0-9]+)? *$').match(range)
         if not match:
             raise Exception("Invalid range")
         start = int(match.groupdict()["start"])
         end = int(match.groupdict()["end"])
         if not end:
             end = self.file_size+1
-        self.request.body = FileStreamReader(self.request.url,(start,end))
-        self.request.headers["Range"] = f"bytes={start}-{end}"
-        self.request.headers["Content-Length"] = str(end - start)
-        self.request.headers["Content-Range"] = f"bytes {start}-{end}/{self.file_size}"
-        self.request.headers["Accept-Ranges"] = "bytes"
-        self.request.headers["Connection"] = "keep-alive"
+        headers = {}
 
-        Response(version=VERSION,status=206,status_text='Partial Content',headers=self.request.headers,req=self.request,body=
-                FileStreamReader(self.file,(start,end-1))).response()
+        headers["Range"] = f"bytes={start}-{end}"
+        headers["Content-Length"] = str(end - start + 1)
+        headers["Content-Range"] = f"bytes {start}-{end}/{self.file_size}"
+        headers["Accept-Ranges"] = "bytes"
+        headers["Connection"] = "keep-alive"
+
+        Response(version=VERSION,status=206,status_text='Partial Content',headers=headers,req=self.request,body=
+                FileStreamReader(self.file,(start,end+1))).response()
         
     def close(self):
         self.file.close()

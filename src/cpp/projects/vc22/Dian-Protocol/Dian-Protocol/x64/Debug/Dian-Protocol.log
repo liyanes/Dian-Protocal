@@ -1,3 +1,7 @@
-﻿  server-main.cpp
-D:\Studio\Dian-Protocol\src\cpp\src\server.hpp(1,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+﻿  base.cpp
+D:\Studio\Dian-Protocol\src\cpp\src\base.cpp(111,41): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+D:\Studio\Dian-Protocol\src\cpp\src\base.cpp(352,28): warning C4267: “初始化”: 从“size_t”转换到“int”，可能丢失数据
+D:\Studio\Dian-Protocol\src\cpp\src\base.cpp(631,29): warning C4018: “>=”: 有符号/无符号不匹配
+D:\Studio\Dian-Protocol\src\cpp\src\base.cpp(645,13): warning C4018: “>=”: 有符号/无符号不匹配
+D:\Studio\Dian-Protocol\src\cpp\src\base.cpp(659,13): warning C4018: “>=”: 有符号/无符号不匹配
   Dian-Protocol.vcxproj -> D:\Studio\Dian-Protocol\src\cpp\projects\vc22\Dian-Protocol\x64\Debug\Dian-Protocol.exe

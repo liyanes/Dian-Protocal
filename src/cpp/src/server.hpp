@@ -2,6 +2,11 @@
 #include <thread>
 #include <functional>
 #include <vector>
+#include <mutex>
+
+#ifdef _DEBUG
+#define DIAN_DEBUG
+#endif
 
 namespace dian{
     namespace rtsp{
@@ -46,6 +51,7 @@ namespace dian{
             void _handle(RtspRequest& request, RtspResponse& response,dian::socket::socket& client);
 
             std::map<std::string,Session> sessions;
+            std::mutex sessions_lock;
         public:
             bool enable_auth = false;
 
